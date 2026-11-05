@@ -9,6 +9,7 @@ PDF를 프로젝트 비밀번호로 암호화(AES-256-GCM, 키는 PBKDF2-SHA256)
   python tools/rb.py new   --name "프로젝트 이름" --password 비번 [--id 원하는ID]
   python tools/rb.py round --id 프로젝트ID --password 비번 --pdf 파일.pdf --label "v3" [--note "변경 내용"]
   python tools/rb.py info  --id 프로젝트ID --password 비번
+  python tools/rb.py drop  --id 프로젝트ID --password 비번 --round 1      (라운드 삭제)
   python tools/rb.py rekey --id 프로젝트ID --password 기존비번 --new-password 새비번
 """
 import argparse, base64, json, os, secrets, string, sys
@@ -87,6 +88,17 @@ def cmd_info(a):
     print(json.dumps(meta, ensure_ascii=False, indent=1))
 
 
+def cmd_drop(a):
+    pj, key, meta = load(a.id, a.password)
+    r = next((r for r in meta['rounds'] if r['round'] == a.round), None)
+    if not r: sys.exit(f'R{a.round} 라운드가 없습니다.')
+    meta['rounds'] = [x for x in meta['rounds'] if x['round'] != a.round]
+    p = os.path.join(pdir(a.id), r['file'])
+    if os.path.exists(p): os.remove(p)
+    save(a.id, pj, key, meta)
+    print(json.dumps({'id': a.id, 'dropped': a.round, 'rounds': [x['round'] for x in meta['rounds']]}, ensure_ascii=False))
+
+
 def cmd_rekey(a):
     pj, key, meta = load(a.id, a.password)
     if len(a.new_password) < 4: sys.exit('새 비밀번호는 4자 이상이어야 합니다.')
@@ -106,6 +118,7 @@ if __name__ == '__main__':
     p = sp.add_parser('round'); p.add_argument('--id', required=True); p.add_argument('--password', required=True)
     p.add_argument('--pdf', required=True); p.add_argument('--label'); p.add_argument('--note')
     p = sp.add_parser('info'); p.add_argument('--id', required=True); p.add_argument('--password', required=True)
+    p = sp.add_parser('drop'); p.add_argument('--id', required=True); p.add_argument('--password', required=True); p.add_argument('--round', type=int, required=True)
     p = sp.add_parser('rekey'); p.add_argument('--id', required=True); p.add_argument('--password', required=True); p.add_argument('--new-password', required=True)
     a = ap.parse_args()
-    {'new': cmd_new, 'round': cmd_round, 'info': cmd_info, 'rekey': cmd_rekey}[a.cmd](a)
+    {'new': cmd_new, 'round': cmd_round, 'info': cmd_info, 'drop': cmd_drop, 'rekey': cmd_rekey}[a.cmd](a)
