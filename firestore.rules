@@ -1,0 +1,45 @@
+rules_version = '2';
+// 검토 보드(review-board) Firestore 보안 규칙
+// - 메모 위치: boards/{보드키}/memos/{메모ID}
+//   보드키는 프로젝트 비밀번호로 암호화된 project.json 안에만 있어, 비밀번호를 아는 사람만 경로를 압니다.
+// - 익명 로그인(Anonymous Auth)한 브라우저만 읽기·쓰기 가능
+// - 상태(대기·반영·보류) 변경은 누구나, 본문 수정·삭제는 작성자 본인만
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /boards/{board}/memos/{memo} {
+      function signedIn() { return request.auth != null; }
+      function okBoard() { return board.size() >= 32 && board.size() <= 64; }
+      function okBody(d) {
+        return d.text is string && d.text.size() > 0 && d.text.size() <= 4000
+          && d.author is string && d.author.size() > 0 && d.author.size() <= 30;
+      }
+      function okNum(v) { return v == null || (v is number && v >= 0 && v <= 100); }
+
+      allow read: if signedIn() && okBoard();
+
+      allow create: if signedIn() && okBoard()
+        && request.resource.data.keys().hasOnly(['round', 'page', 'x', 'y', 'parentId', 'author', 'text',
+                                                 'status', 'owner', 'created', 'updated', 'deleted'])
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.round is int && request.resource.data.page is int
+        && okNum(request.resource.data.x) && okNum(request.resource.data.y)
+        && request.resource.data.parentId is string && request.resource.data.parentId.size() <= 40
+        && request.resource.data.status in ['대기', '반영', '보류', '']
+        && request.resource.data.deleted == false
+        && okBody(request.resource.data);
+
+      allow update: if signedIn() && okBoard() && (
+        // 누구나: 상태만 변경
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updated'])
+          && request.resource.data.status in ['대기', '반영', '보류'])
+        ||
+        // 작성자 본인: 본문 수정 또는 삭제 표시
+        (resource.data.owner == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'updated', 'deleted'])
+          && okBody(request.resource.data))
+      );
+
+      allow delete: if false;
+    }
+  }
+}
